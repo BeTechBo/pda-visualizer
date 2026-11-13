@@ -61,11 +61,22 @@ svg{width:100%;height:auto;display:block}
 #stackwrap{display:flex;flex-direction:column;align-items:center}
 #stack{width:130px;min-height:250px;border:3px solid var(--ink);border-top:0;border-radius:0 0 8px 8px;padding:5px;display:flex;flex-direction:column;gap:4px;justify-content:flex-start}
 @media (prefers-color-scheme:dark){#stack{border-color:#9fb7d6}}
-#stack div{height:30px;border-radius:5px;display:grid;place-items:center;font:500 .95rem 'IBM Plex Mono',monospace;background:#cfe6ea;color:#0b3a40;flex:none;animation:pop .25s ease-out}
+#stack div{height:30px;border-radius:5px;display:grid;place-items:center;font:500 .95rem 'IBM Plex Mono',monospace;background:#cfe6ea;color:#0b3a40;flex:none}
 #stack div.top{background:var(--amber);color:#1b1405}
 #stack div.z{background:#c9d4e4;color:#1d2f4a}
-@keyframes pop{from{transform:translateY(-14px);opacity:0}to{transform:none;opacity:1}}
-@media (prefers-reduced-motion:reduce){#stack div{animation:none}}
+@keyframes pop{from{transform:translateY(-40px);opacity:0}to{transform:none;opacity:1}}
+#stack{position:relative}
+#stack div.new{animation:pop var(--d,.5s) ease-out}
+#stack div.out{position:absolute;left:5px;right:5px;z-index:2;animation:out var(--d,.5s) ease-in forwards;pointer-events:none}
+@keyframes out{to{transform:translateY(-50px);opacity:0}}
+circle.node.on{animation:pulse var(--d,.5s) ease-out;transform-box:fill-box;transform-origin:center}
+@keyframes pulse{0%{transform:scale(.8)}60%{transform:scale(1.18)}100%{transform:scale(1)}}
+#tape .cur{animation:tick var(--d,.5s) ease-out}
+@keyframes tick{from{transform:translateY(-8px)}to{transform:none}}
+#trace .row.cur{animation:slide var(--d,.5s) ease-out}
+@keyframes slide{from{opacity:0;transform:translateX(-12px)}}
+.ctrl input[type=range]{min-width:110px;padding:0}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
 .topnote{font-size:.8rem;color:var(--mut);margin-bottom:6px}
 /* trace */
 #verdict{font-weight:600;margin:6px 0}
@@ -112,6 +123,7 @@ textarea{width:100%;min-height:150px;font-family:'IBM Plex Mono',monospace;font-
     <button class="btn" id="next">Step</button>
     <button class="btn" id="play">Play</button>
     <button class="btn" id="reset">Reset</button>
+    <label>Delay per step<input type="range" id="spd" min="200" max="1800" step="100" value="900"></label>
   </div>
 
   <div class="grid">
@@ -123,8 +135,8 @@ textarea{width:100%;min-height:150px;font-family:'IBM Plex Mono',monospace;font-
     <div class="card" id="stackwrap"><h3>Stack</h3><div class="topnote">top</div><div id="stack"></div></div>
   </div>
 
-  <details>
-    <summary>Edit the machine</summary>
+  <details open>
+    <summary>Your own machine: edit anything below, then press Load</summary>
     <div class="def">
       <label>Start state<input id="q0" class="mono"></label>
       <label>Start stack symbol<input id="z0" class="mono" maxlength="1"></label>
@@ -182,6 +194,13 @@ q1 a A q1 e
 q1 b B q1 e
 q1 e Z q1 e`}
 };
+const CUSTOM='✎ Your own machine';
+PRE[CUSTOM]={q0:'q0',z:'Z',fin:'q2',mode:'final',w:'0011',t:`q0 0 Z q0 XZ
+q0 0 X q0 XX
+q0 1 X q1 e
+q1 1 X q1 e
+q1 e Z q2 Z`};
+let prevS=null,fwd=false,ms=900;
 const $=id=>document.getElementById(id);
 let T=[],M={},steps=[],idx=0,timer=null,info={};
 
@@ -198,6 +217,11 @@ $('home').onclick=()=>{stop();$('tool').style.display='none';$('landing').style.
 const ps=$('preset');Object.keys(PRE).forEach(k=>ps.add(new Option(k,k)));
 function fill(){const p=PRE[ps.value];$('q0').value=p.q0;$('z0').value=p.z;$('fin').value=p.fin;$('mode').value=p.mode;$('trs').value=p.t;$('inp').value=p.w;load();}
 ps.onchange=fill;
+function saveCustom(){PRE[CUSTOM]={q0:$('q0').value,z:$('z0').value,fin:$('fin').value,mode:$('mode').value,w:$('inp').value,t:$('trs').value};ps.value=CUSTOM}
+['q0','z0','fin','mode','trs'].forEach(id=>$(id).addEventListener('input',saveCustom));
+$('inp').addEventListener('input',()=>{if(ps.value===CUSTOM)PRE[CUSTOM].w=$('inp').value});
+function setSpeed(){ms=+$('spd').value;document.documentElement.style.setProperty('--d',Math.min(ms*.6,800)+'ms');if(timer){clearInterval(timer);timer=setInterval(tick,ms)}}
+$('spd').oninput=setSpeed;setSpeed();
 
 function parse(){
   const err=$('err');err.textContent='';
@@ -245,6 +269,7 @@ function simulate(w){
 function load(){
   stop();if(!parse())return;
   const w=$('inp').value.trim();
+  prevS=null;fwd=false;
   const r=simulate(w);steps=r.path;info={w,acc:r.accepted,ex:r.explored};idx=0;drawStatic();render();
 }
 $('load').onclick=load;
@@ -293,14 +318,25 @@ function diagram(){
     o+=`<circle class="node${s===cs?' on':''}" cx="${x}" cy="${y}" r="${R}"/><text class="nt" x="${x}" y="${y}">${s}</text>`;
     if(M.fin.has(s))o+=`<circle class="node${s===cs?' on':''}" style="fill:none" cx="${x}" cy="${y}" r="${R-5}"/>`;
   }
+  const m=fwd&&!matchMedia('(prefers-reduced-motion:reduce)').matches&&o.match(/class="edge on"[^>]*d="([^"]+)"/);
+  if(m)o+=`<circle r="7" fill="var(--amber)" stroke="#fff" stroke-width="2"><animateMotion dur="${Math.min(ms*.6,800)/1000}s" path="${m[1]}" fill="freeze"/></circle>`;
   $('svg').innerHTML=o;
+}
+function drawStack(s){
+  const p=prevS;let k=0;
+  if(p)while(k<p.length&&k<s.length&&p[p.length-1-k]===s[s.length-1-k])k++;
+  const nw=p?s.length-k:0,gone=p?p.length-k:0;
+  let h='';
+  for(let g=0;g<gone;g++)h+=`<div class="out" style="top:${5+g*34}px">${p[g]}</div>`;
+  h+=s.map((x,i)=>`<div class="${x===M.z&&i===s.length-1?'z':''} ${i===0?'top':''} ${i<nw?'new':''}">${x}</div>`).join('')||'<div style="background:none;color:var(--mut);font-size:.8rem">empty</div>';
+  $('stack').innerHTML=h;prevS=s.slice();
 }
 
 function idStr(c){return `(${c.q}, ${c.i<info.w.length?info.w.slice(c.i):E}, ${sstr(c.s)})`}
 function render(){
   const w=info.w,c=steps[idx].c;
   $('tape').innerHTML=w?[...w].map((ch,i)=>`<span class="${i<c.i?'done':i===c.i?'cur':''}">${ch}</span>`).join(''):'<span style="width:auto;padding:0 10px">ε (empty string)</span>';
-  $('stack').innerHTML=c.s.map((s,i)=>`<div class="${s===M.z&&i===c.s.length-1?'z':''} ${i===0?'top':''}">${s}</div>`).join('')||'<div style="background:none;color:var(--mut);font-size:.8rem">empty</div>';
+  drawStack(c.s);
   diagram();
   $('trace').innerHTML=steps.slice(0,idx+1).map((st,i)=>`<div class="row${i===idx?' cur':''}"><span class="n">${i?'⊢':''}</span><span>${idStr(st.c)}</span><span class="tr">${st.t!==null?tstr(T[st.t]):'start'}</span></div>`).join('');
   $('trace').scrollTop=1e5;
@@ -312,14 +348,15 @@ function render(){
   $('prev').disabled=idx===0;$('next').disabled=last;
 }
 function stop(){clearInterval(timer);timer=null;$('play').textContent='Play'}
-$('next').onclick=()=>{if(idx<steps.length-1){idx++;render()}};
-$('prev').onclick=()=>{if(idx>0){idx--;render()}};
-$('reset').onclick=()=>{stop();idx=0;render()};
+function tick(){if(idx<steps.length-1){idx++;fwd=true;render()}else stop()}
+$('next').onclick=()=>{if(idx<steps.length-1){idx++;fwd=true;render()}};
+$('prev').onclick=()=>{if(idx>0){idx--;fwd=false;render()}};
+$('reset').onclick=()=>{stop();idx=0;fwd=false;prevS=null;render()};
 $('play').onclick=()=>{
   if(timer){stop();return}
-  if(idx>=steps.length-1)idx=0;
-  $('play').textContent='Pause';render();
-  timer=setInterval(()=>{if(idx<steps.length-1){idx++;render()}else stop()},900);
+  if(idx>=steps.length-1){idx=0;prevS=null}
+  fwd=false;$('play').textContent='Pause';render();
+  timer=setInterval(tick,ms);
 };
 fill();
 </script>
