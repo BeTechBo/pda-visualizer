@@ -308,7 +308,8 @@ function diagram(){
       const cx=(x1+x2)/2+px*off*2,cy=(y1+y2)/2+py*off*2;
       o+=`<path class="edge${on?' on':''}" style="color:${col}" d="M${sx} ${sy} Q${cx} ${cy} ${ex} ${ey}" marker-end="url(#ar)"/>`;
       const mx=.25*sx+.5*cx+.25*ex,my=.25*sy+.5*cy+.25*ey,sg=off>=0?1:-1;
-      labels.forEach((l,j)=>{const on2=ids[j]===at;o+=`<text class="lbl${on2?' on':''}" x="${mx+px*14}" y="${my+py*14-8+j*14-(labels.length-1)*7}">${l}</text>`});
+      let nx=px,ny=py;if(!off&&ny>0){nx=-nx;ny=-ny}
+      labels.forEach((l,j)=>{const on2=ids[j]===at;const k=ny<0?labels.length-1-j:j;const d=18+k*15;o+=`<text class="lbl${on2?' on':''}" x="${mx+nx*d}" y="${my+ny*d+4}">${l}</text>`});
     }
   }
   const [sx0,sy0]=layout[M.q0];
